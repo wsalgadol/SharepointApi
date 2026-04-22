@@ -1,0 +1,89 @@
+trigger:
+  batch: true
+  branches:
+    include:
+      - '*'
+
+pool:
+  name: 'ServerPool'
+
+variables:
+  solution: '**/AgenteRegTel.sln'
+  buildConfiguration: 'Release'
+
+steps:
+- task: DeleteFiles@1
+  displayName: 'Clean Artifact Staging Directory'
+  inputs:
+    SourceFolder: '$(Build.ArtifactStagingDirectory)'
+    Contents: '**/*'
+    removeSourceFolder: false
+
+- task: DeleteFiles@1
+  displayName: 'Clean Publish Directory'
+  inputs:
+    SourceFolder: '$(Build.ArtifactStagingDirectory)/publish'
+    Contents: '**/*'
+    removeSourceFolder: false
+
+- task: UseDotNet@2
+  inputs:
+    packageType: 'sdk'
+    version: '9.x'
+    installationPath: $(Agent.ToolsDirectory)/dotnet
+
+- task: DotNetCoreCLI@2
+  displayName: 'Restore NuGet packages'
+  inputs:
+    command: 'restore'
+    projects: '$(solution)'
+
+- task: DotNetCoreCLI@2
+  displayName: 'Build solution'
+  inputs:
+    command: 'build'
+    projects: '$(solution)'
+    arguments: '--configuration $(buildConfiguration)'
+
+- task: DotNetCoreCLI@2
+  displayName: 'Run tests'
+  inputs:
+    command: 'test'
+    projects: '**/*Tests*.csproj'
+    arguments: '--configuration $(buildConfiguration) --no-build --logger trx'
+
+- task: PublishTestResults@2
+  condition: succeededOrFailed()
+  inputs:
+    testResultsFormat: 'VSTest'
+    testResultsFiles: '**/TestResults/*.trx'
+    failTaskOnFailedTests: true
+
+- task: DotNetCoreCLI@2
+  displayName: 'Publish project'
+  inputs:
+    command: 'publish'
+    projects: '**/AgenteRegTelApi.csproj'
+    arguments: >
+      --configuration $(buildConfiguration)
+      --output $(Build.ArtifactStagingDirectory)/publish
+
+- powershell: |
+    $publishPath = "$(Build.ArtifactStagingDirectory)/publish"
+    $zip = Get-ChildItem -Path $publishPath -Filter *.zip | Select-Object -First 1
+    if ($zip) {
+      Write-Host "Descomprimiendo $($zip.FullName)..."
+      Expand-Archive -Path $zip.FullName -DestinationPath $publishPath -Force
+      Remove-Item $zip.FullName
+      Write-Host "ZIP eliminado y archivos descomprimidos en $publishPath"
+    } else {
+      Write-Host "No se encontró ningún ZIP en $publishPath"
+    }
+  displayName: 'Descomprimir y eliminar ZIP si existe'
+
+- task: PublishBuildArtifacts@1
+  inputs:
+    PathtoPublish: '$(Build.ArtifactStagingDirectory)/publish'
+    ArtifactName: 'drop'
+    publishLocation: 'Container'
+

@@ -1,0 +1,95 @@
+trigger: none
+
+resources:
+  pipelines:
+    - pipeline: CI
+      source: CI-AgenteRegTelApi
+      trigger:
+        branches:
+          include:
+            - main
+            - releases/*
+
+stages:
+- stage: PRE
+  displayName: 'Despliegue a PRE'
+  variables:
+    STAGE_NAME: 'PRE'
+  jobs:
+    - deployment: Deploy_PRE
+      displayName: 'Deploy PRE'
+      environment: 'PRE'
+      strategy:
+        runOnce:
+          deploy:
+            steps:
+              - download: CI
+                artifact: drop
+
+              - task: ArchiveFiles@2
+                displayName: 'Backup PRE'
+                inputs:
+                  rootFolderOrFile: 'C:\inetpub\www - tcapps.tribunalconstitucional.es\AgenteRegTelApi'
+                  includeRootFolder: true
+                  archiveType: 'zip'
+                  archiveFile: 'C:\inetpub\www - tcapps.tribunalconstitucional.es\backup_APPS\AgenteRegTelApi\AgenteRegTelApi_$(Build.BuildId).zip'
+                  replaceExistingArchive: true
+
+              - task: IISWebAppManagementOnMachineGroup@0
+                displayName: 'Manage IIS Website PRE'
+                inputs:
+                  IISDeploymentType: 'IISWebsite'
+                  ActionIISWebsite: 'CreateOrUpdateWebsite'
+                  WebsiteName: 'tcapps-pre.tribunalconstitucional.es'
+                  WebsitePhysicalPath: '$(SystemDrive)\inetpub\www - tcapps.tribunalconstitucional.es\'
+                  DotNetVersionForWebsite: 'v4.0'
+                  PipeLineModeForWebsite: 'Integrated'
+                  AppPoolIdentityForWebsite: 'ApplicationPoolIdentity'
+                  WindowsAuthenticationForWebsite: true
+
+              - task: PowerShell@2
+                displayName: 'Preparar PackageTmp'
+                inputs:
+                  targetType: 'inline'
+                  script: |
+                    # El artefacto ya es una carpeta, no hay que extraer nada
+                    $packageTmpPath = "$(Pipeline.Workspace)/CI/drop"
+                    if (-not (Test-Path $packageTmpPath)) {
+                      Write-Error "❌ ERROR: No se encontró la carpeta $packageTmpPath."
+                      exit 1
+                    }
+                    echo "##vso[task.setvariable variable=packageTmpPath]$packageTmpPath"
+
+              - task: PowerShell@2
+                displayName: 'Usar appsettings del ambiente y limpiar otros'
+                inputs:
+                  targetType: 'inline'
+                  script: |
+                    $packagePath = "$(packageTmpPath)"
+                    $stage = "$(STAGE_NAME)"   # PRE, PRO, etc.
+                    
+                    $mainConfig = Join-Path $packagePath "appsettings.json"
+                    $envConfig = Join-Path $packagePath ("appsettings." + $stage + ".json")
+
+                    if (Test-Path $envConfig) {
+                      Copy-Item -Path $envConfig -Destination $mainConfig -Force
+                      Write-Output "✅ appsettings.json reemplazado por appsettings.$stage.json"
+                    } else {
+                      Write-Warning "⚠️ No se encontró appsettings.$stage.json, se mantiene el original"
+                    }
+
+                    # Eliminar todos los appsettings.*.json menos el final
+                    Get-ChildItem -Path $packagePath -Filter "appsettings.*.json" | ForEach-Object {
+                      if ($_.Name -ne "appsettings.json") {
+                        Remove-Item $_.FullName -Force
+                        Write-Output "🗑️ Eliminado: $($_.FullName)"
+                      }
+                    }
+
+              - task: IISWebAppDeploymentOnMachineGroup@0
+                displayName: 'Deploy IIS Website/App: PRE'
+                inputs:
+                  WebSiteName: 'tcapps-pre.tribunalconstitucional.es'
+                  VirtualApplication: 'AgenteRegTelApi'
+                  Package: '$(packageTmpPath)'
+                  # Otros parámetros según tu entorno

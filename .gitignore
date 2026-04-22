@@ -243,4 +243,3 @@ ModelManifest.xml
 *.pubxml
 /TJSecretarias_V2.0/TJSecretarias_V2.0/TJSecretariasDAL/FT_TiposMateria.cs
 /src/Logs/AgenteRegTelApi/log-AgenteRegTel20250707.txt
-/src/Sharepoint.Api/Logs/SPApiLog.txt
